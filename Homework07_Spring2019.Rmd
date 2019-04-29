@@ -1,11 +1,16 @@
 ---
 title: "Homework 07 Spring 2019"
-author: "Melinda Higgins"
-date: "April 12, 2019"
-output: html_document
+author: "Daniel Smith"
+date: "April 14, 2019"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
 ---
 
 ## Homework 07 Spring 2019 - DUE April 17, 2019
+
+**NOTE TO DR. HIGGINS: I'm not sure I did any of this correctly. Any and all feedback is greatly appreciated. Thanks, Daniel**
 
 ```{r setup, include=FALSE}
 # leave echo = TRUE to see code
@@ -16,6 +21,29 @@ knitr::opts_chunk$set(warning = FALSE)
 knitr::opts_chunk$set(message = FALSE)
 ```
 
+```{r packages}
+ #load everything needed 
+library(NHANES)
+library(dplyr)
+library(gmodels)
+library(ROCR)
+library(rpart)
+library(partykit)
+library(tidyverse)
+library(RColorBrewer)
+library(reshape)
+library(plot3D)
+library(parallel)
+library(randomForestSRC)
+library(ggRandomForests)
+library(class)
+library(mosaic)
+library(mice)
+library(ggplot2)
+library(car)
+library(stargazer)
+library(reshape2)
+```
 -----
 
 ## Course Material to Review
@@ -30,14 +58,10 @@ In the `NHANES` dataset there is a discrete variable called `Depressed` indicati
 
 Run this R code to get started and create 2 groups that either were depressed "None" versus more than "None" - the new variable is `depressedYes`.
 
-```
-# load NHANES and dplyr packages
-library(NHANES)
-library(dplyr)
-
+```{r NHANES}
 # add depressedYes to NHANES dataset
 NHANES <- NHANES %>%
-  mutate(depressedYes <- Depressed != "None")
+  mutate(depressedYes = Depressed != "None")
   
 # check recoding that "Several" and "Most"
 # are coded as TRUE for depressedYes
@@ -50,10 +74,209 @@ NHANES %>%
 PROBLEM 1: Run 4 classifier models for `depressedYes`:
 
 * logistic regression
-* decision tree, 
-* random forest, 
+A)Build the Classifier
+
+```{r logreg}
+#summarize the data set 
+summary(NHANES)
+#Split the data into a training and test dataset (90/10 split) based on a fix seed
+set.seed(123456)
+lr1 <- glm(depressedYes ~ SleepHrsNight + Age, data=NHANES, family=binomial)
+summary
+```
+
+B)Report Effectiveness on NHANES Dataset AND C) Appropriate Visualizations 
+  Not a very good model. Sensitivity Is not good, Sepcificity is Acceptable. 
+  
+```{r prediciton}
+#How did LR1 do in prediction?
+lr1.p <- predict(lr1, newdata=NHANES, type = "response")
+#plot for continuous predictor SleepHrsNight
+plot(NHANES$SleepHrsNight, lr1.p) #plot tells us we need a probability of outcome around 0.25. 
+plot(NHANES$Age, lr1.p)
+#Confusion Matrix 
+CrossTable(NHANES$depressedYes, lr1.p > 0.25)
+#OR we can get TPR and FPR with a 0.25 probability 
+#confusion matrix 
+t1 <- table(lr1.p > 0.25, NHANES$depressedYes)
+t1 #gives same results as the CrossTable() funciton above. 
+#calculate sensitivity 
+tpr <- t1[2,2]/(t1[2,2]+t1[1,2])
+tpr  #not very good; only 19.5%
+#calculate specificity 
+tnr <- t1[1,1]/(t1[1,1]+t1[2,1])
+tnr #Pretty good at 89.7%
+```
+
+```{r, eval=FALSE}
+#Look at Area under the curve 
+lr1.pr <- prediction(lr1.p, NHANES$depressedYes)
+lr1.prf <- performance(lr1.pr, measure = "tpr", x.measure= "fpr") #I can't get this to run properly and have spent too much time on it. I can't figure out why I keep getting an error/how to fix it... 
+plot(lr1.prf)
+abline(a=0, b=1, col="red")
+#AUC 
+auc <- performance(lr1.pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc #auc "not enough distinct predicitons to compute area under the ROC curve" However, I have a feeling the AUC is not very good for this model.
+```
+
+D) Interpret
+
+```{r}
+#Get ORs from lr1
+exp(coef(lr1))
+```
+
+For everyone one hour increase in the number of sleep per night, the odds of being classified as depressed decreases by 0.1 when controlling for age. Controlling for number of hours of sleep/night, age pracitcally has no effect on the odds of being classified as depressed.  
+
+* decision tree
+A) Build the Classifier 
+
+```{r}
+#Use Logisitc Regression Model from Above 
+summary(NHANES) 
+#grow tree
+fitd <- rpart(depressedYes~., method="class", data = NHANES) #decided to include all possible predictors because my tree was only a "root" with any combination that I came up with. In the end, only one variable was used to make the tree. Does not seem like a good fit given that depression was used ot make depressedYes. 
+class(fitd)
+#display results 
+printcp(fitd)
+#Visualize Cross-Validation Restuls 
+plotcp(fitd)
+#Summary of Splits 
+summary(fitd)
+```
+
+B) Report Effectiveness
+  Was not effective on the NHANES data set. When including all variables, the only varibale included in the decision tree was "Depressed" which was used to make the "depressedYes" variable. 
+  
+C) Visualization 
+
+```{r}
+# Plot the tree
+plot(fitd, uniform = TRUE, main = "Classification Tree for Depressed Yes")
+text(fitd, use.n = TRUE, all = TRUE, cex = 0.8)
+```
+
+D) Interpret Results... There isn't much that is meaningful from this tree since the variable "depressed" was used to create "depressedYes"... Did I do something wrong?
+
+* random forest
+A) Build Classifier 
+
+```{r}
+NHANES.df <- as.data.frame(NHANES)
+set.seed(456789)
+# Random Forest for the NHANES dataset
+fitallrf <- rfsrc(depressedYes~., data=NHANES.df, ntree = 100, tree.err=TRUE, na.action = c("na.impute"))
+# view the results
+fitallrf
+```
+
+B) Report its effectiveness on the NHANES dataset and C) Make an approriate visualization of the model (I think this is answered here?)
+
+```{r}
+# Plot the OOB errors against the growth of the forest
+gg_e <- gg_error(fitallrf) #only one tree reported an error value and it was tree '100' and the rate was very small. 
+plot(gg_e)
+# Plot the predicted depressedYes values
+plot(gg_rfsrc(fitallrf), alpha = 0.5)
+#Plot VIMP rankings of independent variables 
+plot(gg_vimp(fitallrf))
+#minimal depth 
+varsel_depressedYes <- var.select(fitallrf)
+# Save the gg_minimal_depth object for later use
+gg_md <- gg_minimal_depth(varsel_depressedYes)
+# Plot the object
+plot(gg_md)
+# Plot minimal depth v VIMP
+gg_mdVIMP <- gg_minimal_vimp(gg_md)
+plot(gg_mdVIMP) #Honestly, I don't know why I have two lines... BUT if we go off the diagonal line, the measurements are in agreement. #Create the variable dependence object from the random forest
+gg_v <- gg_variable(fitallrf)
+# Use the top ranked minimal depth variables only, plotted in minimal depth rank order
+xvar <- gg_md$topvars
+# Plot the variable list in a single panel plot
+plot(gg_v, xvar = xvar, panel = TRUE, alpha = 0.4) +
+  labs(y="Predicted depressedYes", x="")
+```
+
+D) Interpretation 
+According to the minimal depth, the top 3 important variables in the prediciton of depressedYes are: Depressed, LittleInterest, and DaysMentHlthBad. This makes sense since depressedYes is a derivative of Depressed and DaysMentHlthBad is known to correlate with depressedYes. Clinically, LittleInterest ebing important in the prediction of depressedYes since having little interest in things you previously enjoyed is part of the clinical diagnosis of depression. 
+
 * k-nearest neighbor
-    
+A)Build the Classifier 
+
+```{r}
+#Create a dataset from NHANES 
+NHANES2 <- NHANES %>%
+  dplyr::select(SleepHrsNight, PhysActiveDays, depressedYes) %>%
+  na.omit()
+glimpse(NHANES2)
+#Convert to numeric
+NHANES2$depressedYes <- as.numeric(NHANES2$depressedYes)
+
+```
+
+B) Report effectiveness
+  100% prediciton using k of 1, 3, 5, 20, 50
+  
+```{r}
+# Apply knn procedure to predict Diabetes
+# Let's try different values of k to see how that affects performance
+knn.1 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$depressedYes, k = 1)
+knn.3 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$depressedYes, k = 3)
+knn.5 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$depressedYes, k = 5)
+knn.20 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$depressedYes, k =20)
+knn.50 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$depressedYes, k =50)
+#knn.1 amount correctly predicted
+100*sum(NHANES2$depressedYes == knn.1)/length(knn.1)
+#knn.3 correct prediciton 
+100*sum(NHANES2$depressedYes == knn.1)/length(knn.3)
+#knn.5 correct 
+100*sum(NHANES2$depressedYes == knn.1)/length(knn.5)
+#knn.20 correct prediciton 
+100*sum(NHANES2$depressedYes == knn.1)/length(knn.20)
+#perfect prediction for all values of K... Let's try knn.50?
+100*sum(NHANES2$depressedYes == knn.1)/length(knn.50)#still 100
+```
+
+C) Appropriate Visualization 
+
+```{r, eval=FALSE}
+#create grid 
+active <- range(~ SleepHrsNight, data = NHANES2)
+sleep <- range(~ PhysActiveDays, data = NHANES2)
+res <- 100
+fake_grid <- expand.grid(
+  PhysActiveDays = seq(from = active[1], to = active[2], length.out = res),
+  SleepHrsNight = seq(from = sleep[1], to = sleep[2], length.out = res))
+# K-nearest neighbor prediction
+pred_knn <- NHANES2 %>%
+  select(SleepHrsNight, PhysActiveDays) %>%
+  knn(test=select(fake_grid, SleepHrsNight, PhysActiveDays), cl = NHANES2$depressedYes, k=5) %>%
+  as.numeric() - 1
+#build the data frame
+res <- fake_grid %>%
+  mutate(
+    "K-nearest neighbor" = pred_knn
+  ) %>%
+  gather(k="model", value = "y_hat", -SleepHrsNight, -PhysActiveDays)
+#plot 
+ ggplot(data = res, aes(x = SleepHrsNight, y = PhysActiveDays)) +
+  geom_tile(aes(fill=y_hat), color = NA) +
+  geom_count(aes(color = depressedYes), alpha = 0.4, data = NHANES2) +
+  scale_fill_gradient(low = "white", high = "blue") +
+  scale_color_manual(values = c("gray", "gold")) +
+  scale_size(range = c(0,2)) +
+  scale_x_continuous(expand = c(0.02, 0)) +
+  scale_y_continuous(expand = c(0.02, 0)) +
+  facet_wrap(~model)
+ #Trying to plot this gives me the error: Error: Continuous value supplied to discrete scale. I'm not sure what I'm doing wrong. I went back and changed my predicotr variable from PhysActive (Y/N) to PhysActiveDays, but that didn't fix it. 
+```
+
+D) Interpret the Results. What have you learned about people who self-report being depressed?
+The knn method overfits the model with 100% perfect prediction at the various levels of k. 
+```{r}
+```
+
 For each model do the following:
 
 (A) Build the classifier.
@@ -64,10 +287,154 @@ For each model do the following:
 PROBLEM 2: Repeat problem 1 except now use the quantitative variable called `DaysMentHlthBad` as your outcome variable. Run 3 models:
 
 * multiple linear regression, 
+(A) Build the classifier.
+
+```{r}
+#Explore the data 
+summary(NHANES) 
+#produce a scatter plot matrix 
+scatterplotMatrix(~ DaysMentHlthBad + Age + Poverty + Education + SleepHrsNight + HealthGen, data = NHANES)
+#Some variables look weird, but Education and HealthGen are factors so might not be an issue? We'll see... I could possible log2() transform SleepHrsNight?
+scatterplotMatrix(~ DaysMentHlthBad + Age + Poverty + Education + log2(SleepHrsNight) + HealthGen, data = NHANES) #Didn't help. I'll just stick with the original. 
+#Regression Time 
+mod1 <- lm(DaysMentHlthBad ~ Age + Poverty + Education + SleepHrsNight + HealthGen, data = NHANES)
+#What did we get?
+summary(mod1)
+#What if we took Education out since not all factors significant?
+mod2 <- lm(DaysMentHlthBad ~ Age + Poverty + SleepHrsNight + HealthGen, data = NHANES)
+#what did we get?
+summary(mod2)
+```
+
+(B) Report its effectiveness on the NHANES dataset.
+
+```{r}
+# diagnostics for the secondmodel
+residualPlots(mod2) #Residuals seem to be okay. 
+#added variable plots
+avPlots(mod2, id.n=2, id.cex=0.7)
+# run the qq-plot
+qqPlot(mod2, id.n=3) #data is not normally distributed. 
+#run Bonferroni test for outliers
+outlierTest(mod2)
+#identify highly influential points
+influenceIndexPlot(mod2, id.n=3)
+#make influence plot to help us understand plot above
+influencePlot(mod2, id.n=3)
+#test for heteroskedasticity
+ncvTest(mod2) #P-values are signifianct would need to deal with 
+#Test for multicollinearity 
+vif(mod2) #values are acceptable 
+```
+
+(C) Make an appropriate visualization of this model.
+
+```{r}
+#Model 2 Results 
+stargazer(mod2, title="Results from Model 2",
+          type = "html", align=TRUE, out="model.htm")
+```
+
+(D) Interpret the results. What have you learned about people who self-report being depressed? 
+From this model, controlling for poverty, hours of sleep per night, and self-rated health status, for every 1 unit increase in "age" the predicted value of "Days Mental Health Bad" decreases by -0.028. For every 1 unit increase in the varibale Poverty (which corresponds to a higher ratio of family income to poverty guidelines so less poverty), the predicted value of "Days Mental Health Bad" decreases by -0.363 when controling for all other variables in the model. Increased hours of sleep per night is also associated with a decrease in the predicted "Days Mental Health Bad". 
+
+On the other hand, rating your general health as poor increased your predicted days of bad mental health by 7.961 when controling for all other variables in the model. Similarly, having fair general health increased yoru predicted days of bad mental health by 3.7773 when controling for all other variables in the model. 
+
 * regression tree, and 
+(A) Build the classifier.
+
+```{r}
+#Make NHANES DATA SET with DaysMentHlthBad
+NHANES3 <- NHANES %>%
+  dplyr::select(DaysMentHlthBad, Age, Poverty, Education, SleepHrsNight, HealthGen) %>%
+  na.omit()
+glimpse(NHANES3)
+summary(NHANES3) #median of sleephrsnight=7
+# Plot panels for each covariate
+NHANES3.panel<- melt(NHANES3, id.vars="DaysMentHlthBad")
+ggplot(NHANES3.panel, aes(x=DaysMentHlthBad, y=value)) +
+  geom_point(alpha=0.4)+
+  scale_color_brewer(palette="Set2")+
+  facet_wrap(~variable, scales="free_y", ncol=3)
+#Not really sure which of these will be good predictors. 
+#Let's see how it partitions with all the variables in 
+fitall <- rpart(DaysMentHlthBad ~., data=NHANES3)
+#let's look at our fit 
+printcp(fitall)
+```
+
+(B) Report its effectiveness on the NHANES dataset.
+
+```{r}
+#Cross-Validation 
+plotcp(fitall)
+#Summary of Fit 
+summary(fitall)
+```
+
+(C) Make an appropriate visualization of this model.
+
+```{r}
+#plot the tree 
+plot(fitall, uniform = TRUE, compress = FALSE, main = "Regression Tree for NHANES3 Dataset")
+text(fitall, use.n = TRUE, all = TRUE, cex = 0.5)
+```
+
+(D) Interpret the results. What have you learned about people who self-report being depressed? 
+
+The two most important variables in the NHANES3 dataset that was created for determining "DaysMentHlthBad" are The General Ratings of Health and the number of hours slept per night. 
+
+```{r}
+```
+
 * random forest.
+(A) Build the classifier.
+
+```{r}
+NHANES.df <- as.data.frame(NHANES)
+set.seed(123456789)
+# Random Forest for the NHANES dataset
+fitallrf2 <- rfsrc(DaysMentHlthBad~., data=NHANES.df, ntree = 100, tree.err=TRUE, na.action = c("na.impute"))
+# view the results
+fitallrf2
+```
+
+(B) Report its effectiveness on the NHANES dataset AND (C) Make an appropriate visualization of this model. I think?
+
+```{r}
+# Plot the OOB errors against the growth of the forest
+gg_e2 <- gg_error(fitallrf2) #only one tree reported an error value and it was tree '100' and the rate was very small. 
+plot(gg_e2)
+# Plot the predicted depressedYes values
+plot(gg_rfsrc(fitallrf2), alpha = 0.5)
+#Plot VIMP rankings of independent variables 
+plot(gg_vimp(fitallrf2))
+#minimal depth 
+varsel_depressedYes2 <- var.select(fitallrf2)
+# Save the gg_minimal_depth object for later use
+gg_md2 <- gg_minimal_depth(varsel_depressedYes2)
+# Plot the object
+plot(gg_md2)
+# Plot minimal depth v VIMP
+gg_mdVIMP2 <- gg_minimal_vimp(gg_md2)
+plot(gg_mdVIMP2) #Going off the diagonal line, the measurements are in agreement. #Create the variable dependence object from the random forest
+gg_v2 <- gg_variable(fitallrf2)
+# Use the top ranked minimal depth variables only, plotted in minimal depth rank order
+xvar2 <- gg_md2$topvars
+# Plot the variable list in a single panel plot
+plot(gg_v2, xvar = xvar, panel = TRUE, alpha = 0.4) +
+  labs(y="Predicted DaysMentHlthBad", x="")
+#plot the random forest plot 
+
+```
+
+(D) Interpret the results. What have you learned about people who self-report being depressed? 
+
+Looking at the minimal depth variables again (those closer to the node), Depressed, DaysPhysHlthBad, Little Interest, and Age are all <3. These variables being important in the prediction of DaysMentHlthBad makes since clinically as if you are depressed you are probaly going to have more bad mental health days; the interaction between physical and mental health is well established and I'm not surprised to see daysphyshlthbad being important; little interest is also a symptom of depressiona and is not surprising to be imporant in prediction DaysMentHlthBad; and finally age is also inlcuded in predicting DaysMentHlthBad.
 
 And answer parts A, B, C, and D again for each model.
 
 **NOTE: `depressedYes` and `DaysMentHlthBad` are correlated but were 2 separate questions and are not perfectly aligned. The amount of missing data `NA's` are different between the 2 variables.** To learn more about the variables in the dataset, run `help(NHANES, package = "NHANES")`.
+
+
 
